@@ -1,0 +1,1301 @@
+{
+  "name": "Contextual RAG Qdrant",
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Init constants').item.json.docling_base_url }}/v1/chunk/hybrid/file",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "target_type",
+              "value": "inbody"
+            },
+            {
+              "name": "convert_from_formats",
+              "value": "pdf"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "files",
+              "inputDataFieldName": "=data"
+            },
+            {
+              "name": "chunking_include_raw_text",
+              "value": "false"
+            },
+            {
+              "name": "chunking_max_tokens",
+              "value": "150"
+            },
+            {
+              "name": "convert_force_ocr",
+              "value": "false"
+            },
+            {
+              "name": "merge_peers",
+              "value": "True"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 1000000
+        }
+      },
+      "id": "20368b0b-5437-4588-bd4c-2fa99e509132",
+      "name": "Docling - Process Document",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1840,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "chunks-split",
+              "name": "chunks",
+              "value": "={{ $('Docling - Process Document').item.json.chunks }}",
+              "type": "array"
+            },
+            {
+              "id": "source-file",
+              "name": "source_file",
+              "value": "={{ $('Read/Write Files from Disk').item.json.fileName }}",
+              "type": "string"
+            },
+            {
+              "id": "total-chunks",
+              "name": "total_chunks",
+              "value": "={{ $('Docling - Process Document').item.json.chunks.length }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ef515113-911e-4452-b1c7-b4050bd1b6a0",
+      "name": "Extract Chunks",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -2032,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "chunks",
+        "options": {}
+      },
+      "id": "59d45fed-451e-4321-9aac-addf72b88e93",
+      "name": "Split Into Items",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        -1856,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Init constants').item.json.llm_base_url }}/api/embed",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "nomic-embed-text"
+            },
+            {
+              "name": "input",
+              "value": "={{ $json.text }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "cd02d6ad-f47e-472a-98ba-e57968484bcd",
+      "name": "Ollama - Create Embeddings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2048,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $('Init constants').item.json.vector_storage_base_url }}/collections/{{ $('Init constants').item.json.vector_collection_name }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"vectors\": {\n    \"dense\": {\n      \"size\": 768,\n      \"distance\": \"Cosine\"\n    }\n  },\n  \"sparse_vectors\": {\n    \"bm25\": {\n      \"modifier\": \"idf\",\n      \"index\": {\n        \"on_disk\": false,\n        \"datatype\": \"float16\"\n      }\n    }\n  }\n}",
+        "options": {
+          "allowUnauthorizedCerts": false,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "2ddb38c6-e10a-43bd-b938-f2c226c52fa2",
+      "name": "Create Collection (If Not Exists)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1312,
+        -192
+      ],
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({\n  \"status\": $json.status,\n  \"operation_id\": $json.result.operation_id,\n  \"state\": $json.result.status,\n  \"message\": \"Document processed and stored in vector storage\",\n  \"source_file\": $('Crypto').item.json.document_id,\n  \"total_chunks\": $('Crypto').item.json.embedding.length\n}) }}",
+        "options": {}
+      },
+      "id": "1b4c193a-27bf-455a-a652-49b2af95ee3a",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -1056,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "=/home/node/.n8n/work/documents/{{ $('Start RAG Webhook Trigger').item.json.body.filename }}",
+        "options": {
+          "dataPropertyName": "data"
+        }
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -2016,
+        32
+      ],
+      "id": "d933ee5b-280b-4308-9184-8b5563b8c6fa",
+      "name": "Read/Write Files from Disk"
+    },
+    {
+      "parameters": {
+        "value": "={{ $('Prepare VectorDB Data').item.json.text }}",
+        "dataPropertyName": "document_hash"
+      },
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        -1440,
+        496
+      ],
+      "id": "4d92595e-6193-4f60-bb68-7d4a377f1e72",
+      "name": "Crypto"
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        -1472,
+        32
+      ],
+      "id": "2932d7fe-38aa-48d5-a866-d35bf44b6a13",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "chunks-split",
+              "name": "full_document",
+              "value": "={{ $('Extract from File').item.json.text }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ed4312fd-8d2a-46d7-a8c1-3452c21a141c",
+      "name": "Extract Full Document",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1312,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "=/home/node/.n8n/work/documents/{{ $('Start RAG Webhook Trigger').item.json.body.filename }}",
+        "options": {
+          "dataPropertyName": "data"
+        }
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -1648,
+        32
+      ],
+      "id": "9347ca90-aa15-4a54-9618-0bd2b086faa9",
+      "name": "Read/Write Files from Disk Get Full Doc Text"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "process-document",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "6880dbd6-2792-4192-8af4-65e9b7ccc23c",
+      "name": "Start RAG Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        -2048,
+        -432
+      ],
+      "webhookId": "84c0153f-9473-4b68-85fa-e80f3622fedf"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6ea9e947-e39b-40c6-bc9e-3152eb6ec103",
+              "name": "=text",
+              "value": "=Context: \n{{ $json.content }}\nChunk:\n{{ $('Split Into Items').item.json.text }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "507d995e-f229-41ee-a890-495e11678d75",
+      "name": "Combine Context and Chunk",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1360,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.vector_storage_base_url }}/collections/{{ $json.vector_collection_name }}/exists",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {
+          "allowUnauthorizedCerts": false,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "15480ac2-4235-4f81-b72c-cb53c36b06a7",
+      "name": "Check Collection Exists",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1840,
+        -208
+      ],
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "chunks-split",
+              "name": "exists",
+              "value": "={{ $json.result.exists }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d9a85df8-d1fc-47f0-8efa-f7a52be57091",
+      "name": "Map collection exists",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1664,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "4b6717fa-61fe-42c9-a27d-b9640a0d9933",
+              "leftValue": "={{ $json.exists }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -1504,
+        -208
+      ],
+      "id": "8d46b0c0-80ea-4a47-b9b3-98850fed294e",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "llama3.2:latest",
+          "mode": "list",
+          "cachedResultName": "llama3.2:latest"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=<document> \n{{ $('Extract Full Document').item.json.full_document}}\n</document>\nHere is the chunk we want to situate within the whole document \n<chunk> \n {{ $json.text }}\n</chunk> \nPlease give a short succinct context to situate this chunk within the overall document for the purposes of improving search retrieval of the chunk. Answer only with the succinct context and nothing else. "
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.ollama",
+      "typeVersion": 1,
+      "position": [
+        -1680,
+        272
+      ],
+      "id": "26e86794-2e94-454a-b12f-3f3829e29bee",
+      "name": "Enrich Chunks with the context",
+      "credentials": {
+        "ollamaApi": {
+          "id": "SN7PCATpv1AI2d5k",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "chunk-text",
+              "name": "text",
+              "value": "={{ $('Combine Context and Chunk').item.json.text }}",
+              "type": "string"
+            },
+            {
+              "id": "doc-id",
+              "name": "document_id",
+              "value": "={{ $('Split Into Items').item.json.filename }}",
+              "type": "string"
+            },
+            {
+              "id": "a1c2320d-e7b1-4e3e-a6f6-1c24245ce83f",
+              "name": "chunk_id",
+              "value": "={{ $('Split Into Items').item.json.chunk_index }}",
+              "type": "string"
+            },
+            {
+              "id": "233ce143-7719-4218-8bfc-c20ed8f5156a",
+              "name": "page_numbers",
+              "value": "={{ $('Split Into Items').item.json.page_numbers }}",
+              "type": "array"
+            },
+            {
+              "id": "335872ad-f1a9-4168-9849-4c3f4f34ccff",
+              "name": "dense_embedding",
+              "value": "={{ $json.embeddings }}",
+              "type": "array"
+            },
+            {
+              "id": "1e1256b3-5fd4-4cad-aa4d-aeb5d8d36b4c",
+              "name": "bm25_embedding",
+              "value": "={{ $json.bm25_embedding }}",
+              "type": "object"
+            },
+            {
+              "id": "1ec4e10d-1862-4978-a8aa-7ef17b2c3c54",
+              "name": "colbert_embedding",
+              "value": "={{ $json.colbert_embedding }}",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "95b3e0bd-a238-444d-9d39-61fa28af797f",
+      "name": "Prepare VectorDB Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1600,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "chunks-split",
+              "name": "vector_collection_name",
+              "value": "=document_chunks",
+              "type": "string"
+            },
+            {
+              "id": "f0efceda-d4ec-4210-87b7-de411f7fb4af",
+              "name": "vector_storage_base_url",
+              "value": "http://qdrant:6333",
+              "type": "string"
+            },
+            {
+              "id": "25d65be7-5b50-48f1-a5a9-49ad3183cd47",
+              "name": "llm_base_url",
+              "value": "http://ollama:11434",
+              "type": "string"
+            },
+            {
+              "id": "5b5fbe4e-6c80-47ce-a3fb-0aebe93fb87d",
+              "name": "docling_base_url",
+              "value": "http://docling:5001",
+              "type": "string"
+            },
+            {
+              "id": "113ff89a-1f2a-444d-bd33-e392558bda36",
+              "name": "bm_25_base_url",
+              "value": "http://fastembed-bm25:8000",
+              "type": "string"
+            },
+            {
+              "id": "2276dd3f-6d5f-4125-b796-252ddab00eec",
+              "name": "colbert_base_url",
+              "value": "http://fastembed-colbert:8000",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4c77b026-950b-4b6e-a2d7-aa68f2072e4e",
+      "name": "Init constants",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -2032,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.rag_context }}\n{{ $json.user_question }}",
+        "options": {
+          "systemMessage": "You are a helpful assistant that provides contextual responses.\nBe concise but informative.",
+          "returnIntermediateSteps": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
+      "position": [
+        -128,
+        256
+      ],
+      "id": "42bac0d3-2cf4-4d0e-9614-4775e3bf260e",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": "llama3.2:latest",
+        "options": {
+          "temperature": 1
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        -144,
+        464
+      ],
+      "id": "a004d193-25bc-4321-b5ae-3008105553d0",
+      "name": "Ollama Chat Model",
+      "credentials": {
+        "ollamaApi": {
+          "id": "j4UciTf412fFDDR8",
+          "name": "Ollama account 2"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        464
+      ],
+      "id": "7d75b80c-2d78-4560-a9e0-932210108cb4",
+      "name": "Simple Memory"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -160,
+        -432
+      ],
+      "id": "4a6df5b7-1c3d-41be-a1f8-de4e5c6eb90f",
+      "name": "When chat message received",
+      "webhookId": "1431085b-e700-42be-a23e-f0aec56cb53f"
+    },
+    {
+      "parameters": {
+        "content": "1. Initiate base urls for Docling, Ollama, \n    Qdrant, BM25 and  ColBert models \n2. Check Qdrant collection exists.\n3. In case of collection not exisrts it will create it.",
+        "height": 192,
+        "width": 1328
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2432,
+        -224
+      ],
+      "id": "7782dbe7-3487-4f8c-865b-53955183efaf",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "Divides the document into parts.\nExtract full document.",
+        "height": 192,
+        "width": 1328
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2432,
+        0
+      ],
+      "id": "c2440493-9da5-4969-b122-69321f4ca692",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "Divides the document into parts.\nExtract full document.",
+        "height": 208,
+        "width": 1328
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2432,
+        208
+      ],
+      "id": "8f6e3cd4-c624-468d-a628-09937e235310",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Generate BM25 Sparse Embedding\nconst text = $('Combine Context and Chunk').item.json.text;\nconst baseUrl = $('Init constants').first().json.bm_25_base_url;\n\nconsole.log('Sending in to bm25 the following text:', text);\nconsole.log('Bm25 model should be avalable at baseUrl :', baseUrl);\n\nconst data = await this.helpers.httpRequest({\n  method: 'POST',\n  url: baseUrl + '/embed/single',\n  headers: { 'Content-Type': 'application/json' },\n  body: { texts: text },\n  json: true\n});\n\nconst bm25Embedding = data.embedding;\n\nreturn {\n  json: {\n    ...$input.item.json,\n    bm25_embedding: bm25Embedding,\n    bm25_nnz: bm25Embedding.indices.length\n  }\n};"
+      },
+      "id": "b8c296af-6102-427e-b14c-6de420079618",
+      "name": "Generate BM25 Embedding",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1904,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Generate ColBERT Embedding\nconst text = $('Combine Context and Chunk').item.json.text;\nconst baseUrl = $('Init constants').first().json.colbert_base_url;\n\nconst data = await this.helpers.httpRequest({\n  method: 'POST',\n  url: baseUrl + '/embed/single',\n  headers: { 'Content-Type': 'application/json' },\n  body: { texts: text },\n  json: true\n});\n\nconst colbertEmbedding = data.embedding;\n\nreturn {\n  json: {\n    ...$input.item.json,\n    colbert_embedding: colbertEmbedding,\n    colbert_num_vectors: colbertEmbedding.length\n  }\n};"
+      },
+      "id": "d124114b-0332-4f98-9cc7-25bf3f920e24",
+      "name": "Generate ColBERT Embedding",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1760,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const collectionName = $('Init constants').item.json.vector_collection_name;\nconst qdrantUrl = $('Init constants').item.json.vector_storage_base_url;\nconst inputDataId = $json.document_hash;\nconst inputDataText = $json.text;\n\nconst denseEmbedding = $json.dense_embedding[0];\nconst bm25Embedding = $json.bm25_embedding;\nconst colbertEmbedding = $json.colbert_embedding;\n\n// Validate required fields\nif (!inputDataId || !inputDataText) {\n  throw new Error('Missing required fields: id and text');\n}\n\n// Prepare point for Qdrant\nconst point = {\n  id: inputDataId,\n  vector: {\n    dense: denseEmbedding,\n    bm25: {\n      indices: bm25Embedding.indices,\n      values: bm25Embedding.values\n    }\n  },\n  payload: {\n    text: inputDataText,\n    colbert_embedding: colbertEmbedding || null,\n    metadata: {\n      \"chunk_id\": inputDataId,\n      \"document_id\": $json.document_id,\n      \"page_numbers\": $json.page_numbers.join(\",\"),\n      \"chunk_index\": $json.chunk_id            \n    },\n    timestamp: new Date().toISOString()\n  }\n};\n\nconst requestBody = { points: [point] };\n\n// LOG THE JSON TO CONSOLE\nconsole.log('Sending JSON to Qdrant:', JSON.stringify(requestBody, null, 2));\n\n// Insert point into Qdrant\ntry {\n  const result = await this.helpers.httpRequest({\n    method: 'PUT',\n    url: `${qdrantUrl}/collections/${collectionName}/points?wait=true`,\n    body: requestBody,\n    json: true\n  });\n\n  return {\n    json: {\n      id: inputDataId,\n      collection_name: collectionName,\n      inserted: true,\n      result: result\n    }\n  };\n} catch (error) {\n  // Log the error response body which often contains the specific Qdrant error message\n  console.error('Qdrant Error Response:', error.response?.data || error.message);\n  throw error;\n}"
+      },
+      "id": "1fed4696-f4fb-4918-998f-d1470e5099f6",
+      "name": "Insert to Qdrant",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1264,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "content": "Colect ollama(dense), bm25 and \ncolbert embeddings.\nInsert chunk and embeddings \nin to the qdrant collection",
+        "height": 224,
+        "width": 1328
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2432,
+        432
+      ],
+      "id": "440eced9-b535-41d3-806c-41dcd83ecba5",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "content": "Test contextual RAG with reranking\nFor example:\n1. Who found the Microsoft Corporation?\n2. What is the market capitalization of Amazon Inc?",
+        "height": 176,
+        "width": 976,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -864,
+        -224
+      ],
+      "id": "647fffec-8d8f-4837-9a21-2bb6830bf6b4",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "chunks-split",
+              "name": "vector_collection_name",
+              "value": "=document_chunks",
+              "type": "string"
+            },
+            {
+              "id": "f0efceda-d4ec-4210-87b7-de411f7fb4af",
+              "name": "vector_storage_base_url",
+              "value": "http://qdrant:6333",
+              "type": "string"
+            },
+            {
+              "id": "25d65be7-5b50-48f1-a5a9-49ad3183cd47",
+              "name": "llm_base_url",
+              "value": "http://ollama:11434",
+              "type": "string"
+            },
+            {
+              "id": "5b5fbe4e-6c80-47ce-a3fb-0aebe93fb87d",
+              "name": "docling_base_url",
+              "value": "http://docling:5001",
+              "type": "string"
+            },
+            {
+              "id": "113ff89a-1f2a-444d-bd33-e392558bda36",
+              "name": "bm_25_base_url",
+              "value": "http://fastembed-bm25:8000",
+              "type": "string"
+            },
+            {
+              "id": "2276dd3f-6d5f-4125-b796-252ddab00eec",
+              "name": "colbert_base_url",
+              "value": "http://fastembed-colbert:8000",
+              "type": "string"
+            },
+            {
+              "id": "9541b1ce-ef79-41d2-a538-7db9bdd03203",
+              "name": "topK",
+              "value": 3,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b9bff142-e8bb-460e-abdc-7885cf091e46",
+      "name": "Init chat constants",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -176,
+        -192
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.llm_base_url }}/api/embed",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "nomic-embed-text"
+            },
+            {
+              "name": "input",
+              "value": "={{ $('When chat message received').item.json.chatInput }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "95159da3-555b-44b9-b267-3539e92fb23a",
+      "name": "Ollama - Embeddings Single",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -352,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Init chat constants').item.json.bm_25_base_url }}/embed/single",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "texts",
+              "value": "={{ $('When chat message received').item.json.chatInput }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "668b87c8-1637-492c-979a-2d2c1d27a370",
+      "name": "BM25 - Embedding Single",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -192,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Init chat constants').item.json.colbert_base_url }}/embed/single",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "texts",
+              "value": "={{ $('When chat message received').item.json.chatInput }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "61a125bf-c433-43f3-961e-ce8d5627f4b0",
+      "name": "Colbert - Embedding Single",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -32,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "content": "Create single embeddings by provided query\n1. Ollama embedding;\n2. BM25 embedding;\n3. Colbert embedding;",
+        "height": 224,
+        "width": 976,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -864,
+        -32
+      ],
+      "id": "c98b0571-ead1-4654-8d54-b0021838d373",
+      "name": "Sticky Note5"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Hybrid Search with Reranking\nconst query = $('When chat message received').first().json.chatInput;\nconst collectionName = $('Init chat constants').first().json.vector_collection_name;\nconst topK = $('Init chat constants').first().json.topK;\nconst qdrantUrl = $('Init chat constants').first().json.vector_storage_base_url;\n// dense\nconst queryDense = $('Ollama - Embeddings Single').first().json.embeddings[0];\n// BM25\nconst queryBm25 = $('BM25 - Embedding Single').first().json.embedding;\n// ColBERT\nconst queryColbert = $input.first().json.embedding;\n\nconsole.log('Init embeddings');\n\n// Hybrid search\nconst searchData = await this.helpers.httpRequest({\n  method: 'POST',\n  url: `${qdrantUrl}/collections/${collectionName}/points/query`,\n  headers: { 'Content-Type': 'application/json' },\n  body: {\n    query: { fusion: 'rrf' },\n    prefetch: [\n      { query: queryDense, using: 'dense', limit: topK * 5 }, // Increased prefetch for better reranking\n      { query: { indices: queryBm25.indices, values: queryBm25.values }, using: 'bm25', limit: topK * 5 }\n    ],\n    limit: topK * 5, // Get more candidates for the ColBERT reranker to work with\n    with_payload: true\n  },\n  json: true\n});\n\n// FIX: Access the .points array from the result object\nconst candidates = searchData.result && searchData.result.points ? searchData.result.points : [];\n\nconsole.log('Search Data result:', candidates);\n\n// ColBERT reranking function\nfunction colbertScore(qVecs, dVecs) {\n  let total = 0;\n  for (const qv of qVecs) {\n    let maxSim = -Infinity;\n    for (const dv of dVecs) {\n      let dot = 0, qNorm = 0, dNorm = 0;\n      for (let i = 0; i < qv.length; i++) {\n        dot += qv[i] * dv[i];\n        qNorm += qv[i] * qv[i];\n        dNorm += dv[i] * dv[i];\n      }\n      const denom = Math.sqrt(qNorm) * Math.sqrt(dNorm);\n      const sim = denom === 0 ? 0 : dot / denom;\n      maxSim = Math.max(maxSim, sim);\n    }\n    total += maxSim;\n  }\n  return total / qVecs.length;\n}\n\nconst results = candidates\n  .filter(c => c.payload && c.payload.colbert_embedding)\n  .map(c => {\n    const colbScore = colbertScore(queryColbert, c.payload.colbert_embedding);\n    return {\n      id: c.id,\n      text: c.payload.text,\n      hybrid_score: c.score, // This is the RRF score\n      colbert_score: colbScore,\n      final_score: (c.score * 0.4) + (colbScore * 0.6)\n    };\n  })\n  .sort((a, b) => b.final_score - a.final_score)\n  .slice(0, topK);\n\nconsole.log('Get candidates and select results:', results);\n\nvar topResult = \"\";\nvar topMetadata = {};\nif (results.length > 0) {\n  topResult = results[0].text;\n}\n\nreturn { \n  json: { \n    query, \n    results, \n    method: 'hybrid_with_colbert_reranking', \n    num_candidates: candidates.length,\n    num_results: results.length,\n    top_result: topResult,\n    top_metadata: topMetadata,\n  } \n};"
+      },
+      "id": "cebdaade-668c-42f0-9e9e-c5fbdd27c677",
+      "name": "Hybrid Search",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -480,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "bfc63c3b-c289-4835-abb6-74d67f51cdb0",
+              "name": "rag_context",
+              "value": "=### CONTEXT START ### \n{{ $json.top_result }}\n### CONTEXT END ###",
+              "type": "string"
+            },
+            {
+              "id": "a999f66c-1b76-42f0-9dbc-31a09c85d2b3",
+              "name": "user_question",
+              "value": "={{ $('When chat message received').item.json.chatInput }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b08a8a13-96f8-49d6-820f-8e591abccdb6",
+      "name": "Init user prompt with context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -288,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "content": "Search context in Qdrand and request \nLLM to answer user question with context.\n1. Search in Qdrant and rank search results;\n2. Request LLM with context and user question;",
+        "height": 384,
+        "width": 976,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -864,
+        208
+      ],
+      "id": "e3768de1-d071-44c4-be26-d4f1d0cca141",
+      "name": "Sticky Note6"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Docling - Process Document": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk Get Full Doc Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Chunks": {
+      "main": [
+        [
+          {
+            "node": "Split Into Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Into Items": {
+      "main": [
+        [
+          {
+            "node": "Enrich Chunks with the context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama - Create Embeddings": {
+      "main": [
+        [
+          {
+            "node": "Generate BM25 Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Collection (If Not Exists)": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read/Write Files from Disk": {
+      "main": [
+        [
+          {
+            "node": "Docling - Process Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crypto": {
+      "main": [
+        [
+          {
+            "node": "Insert to Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "Extract Full Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Full Document": {
+      "main": [
+        [
+          {
+            "node": "Extract Chunks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read/Write Files from Disk Get Full Doc Text": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start RAG Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Init constants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Context and Chunk": {
+      "main": [
+        [
+          {
+            "node": "Ollama - Create Embeddings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Collection Exists": {
+      "main": [
+        [
+          {
+            "node": "Map collection exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map collection exists": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Collection (If Not Exists)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enrich Chunks with the context": {
+      "main": [
+        [
+          {
+            "node": "Combine Context and Chunk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare VectorDB Data": {
+      "main": [
+        [
+          {
+            "node": "Crypto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Init constants": {
+      "main": [
+        [
+          {
+            "node": "Check Collection Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        []
+      ]
+    },
+    "Ollama Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "Init chat constants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate BM25 Embedding": {
+      "main": [
+        [
+          {
+            "node": "Generate ColBERT Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate ColBERT Embedding": {
+      "main": [
+        [
+          {
+            "node": "Prepare VectorDB Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert to Qdrant": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Init chat constants": {
+      "main": [
+        [
+          {
+            "node": "Ollama - Embeddings Single",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama - Embeddings Single": {
+      "main": [
+        [
+          {
+            "node": "BM25 - Embedding Single",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "BM25 - Embedding Single": {
+      "main": [
+        [
+          {
+            "node": "Colbert - Embedding Single",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Colbert - Embedding Single": {
+      "main": [
+        [
+          {
+            "node": "Hybrid Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hybrid Search": {
+      "main": [
+        [
+          {
+            "node": "Init user prompt with context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Init user prompt with context": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "d798a869-7e1b-42d1-8cbc-64a9b59b164a",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "9983dd18e63d530d3471ed69776477f0d7b9bab644b03104ec272cb7ab911f94"
+  },
+  "id": "rk4ym7UYT7QHSZ8B",
+  "tags": []
+}

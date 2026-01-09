@@ -1,0 +1,336 @@
+{
+  "name": "Hybrid Search with Ollama",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "cbb1b796-68b8-4bf7-90d9-0e82a8185873",
+      "name": "When clicking 'Test workflow'",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1104,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "collection_name",
+              "value": "hybrid_demo"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "479b3b2f-5475-440f-99a0-9a32b863d923",
+      "name": "Set Collection Name",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        -944,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Create Qdrant Collection\nconst collectionName = $input.item.json.collection_name;\nconst qdrantUrl = 'http://qdrant:6333';\n\nconst collectionConfig = {\n  vectors: {\n    dense: {\n      size: 768,\n      distance: 'Cosine'\n    }\n  },\n  sparse_vectors: {\n    bm25: {}\n  }\n};\n\n// Check if exists\ntry {\n  await this.helpers.httpRequest({\n    method: 'GET',\n    url: `${qdrantUrl}/collections/${collectionName}`,\n    headers: { 'Content-Type': 'application/json' }\n  });\n\n  return { json: { collection_name: collectionName, created: false, message: 'Already exists' } };\n} catch (error) {\n  // Collection doesn't exist, continue to create\n}\n\n// Create collection\nawait this.helpers.httpRequest({\n  method: 'PUT',\n  url: `${qdrantUrl}/collections/${collectionName}`,\n  headers: { 'Content-Type': 'application/json' },\n  body: collectionConfig,\n  json: true\n});\n\nreturn { json: { collection_name: collectionName, created: true } };"
+      },
+      "id": "8612889f-d5b4-48e6-a95b-0abc895b32c8",
+      "name": "Create Collection",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -784,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "id",
+              "value": "doc_1"
+            },
+            {
+              "name": "text",
+              "value": "Retrieval Augmented Generation (RAG) is a technique that combines information retrieval with language generation. It helps AI systems provide more accurate and contextual responses by fetching relevant documents before generating answers."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "28cac643-b1ac-496a-9a0e-ef5476981753",
+      "name": "Set Sample Document",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        -624,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate Dense Embedding with Ollama\nconst text = $input.item.json.text;\n\nconst data = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'http://host.docker.internal:11434/api/embeddings',\n  headers: { 'Content-Type': 'application/json' },\n  body: {\n    model: 'nomic-embed-text',\n    prompt: text\n  },\n  json: true\n});\n\nconst denseEmbedding = data.embedding;\n\nreturn {\n  json: {\n    ...$input.item.json,\n    dense_embedding: denseEmbedding,\n    dense_dimensions: denseEmbedding.length\n  }\n};"
+      },
+      "id": "163a786c-17f8-4c6f-9d93-7623265c9f6e",
+      "name": "Generate Dense Embedding",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -144,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate BM25 Sparse Embedding\nconst text = $input.item.json.text;\n\nconst data = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'http://fastembed-bm25:8000/embed/single',\n  headers: { 'Content-Type': 'application/json' },\n  body: { texts: text },\n  json: true\n});\n\nconst bm25Embedding = data.embedding;\n\nreturn {\n  json: {\n    ...$input.item.json,\n    bm25_embedding: bm25Embedding,\n    bm25_nnz: bm25Embedding.indices.length\n  }\n};"
+      },
+      "id": "ede7b6a0-2847-40e4-b508-93e7c982703b",
+      "name": "Generate BM25 Embedding",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        32,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate ColBERT Embedding\nconst text = $input.item.json.text;\n\nconst data = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'http://fastembed-colbert:8000/embed/single',\n  headers: { 'Content-Type': 'application/json' },\n  body: { texts: text },\n  json: true\n});\n\nconst colbertEmbedding = data.embedding;\n\nreturn {\n  json: {\n    ...$input.item.json,\n    colbert_embedding: colbertEmbedding,\n    colbert_num_vectors: colbertEmbedding.length\n  }\n};"
+      },
+      "id": "927c7f55-59da-4c49-b0d4-c39128aade41",
+      "name": "Generate ColBERT Embedding",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputData = $input.item.json;\nconst collectionName = inputData.collection_name || 'hybrid_search_collection';\nconst qdrantUrl = 'http://qdrant:6333';\n\n// Validate required fields\nif (!inputData.id || !inputData.text) {\n  throw new Error('Missing required fields: id and text');\n}\n\n// Prepare point for Qdrant\nconst point = {\n  id: inputData.id,\n  vector: {\n    dense: inputData.dense_embedding,\n    bm25: {\n      indices: inputData.bm25_embedding.indices,\n      values: inputData.bm25_embedding.values\n    }\n  },\n  payload: {\n    text: inputData.text,\n    colbert_embedding: inputData.colbert_embedding || null,\n    metadata: inputData.metadata || {},\n    timestamp: new Date().toISOString()\n  }\n};\n\nconst requestBody = { points: [point] };\n\n// LOG THE JSON TO CONSOLE\nconsole.log('Sending JSON to Qdrant:', JSON.stringify(requestBody, null, 2));\n\n// Insert point into Qdrant\ntry {\n  const result = await this.helpers.httpRequest({\n    method: 'PUT',\n    url: `${qdrantUrl}/collections/${collectionName}/points?wait=true`,\n    body: requestBody,\n    json: true\n  });\n\n  return {\n    json: {\n      id: inputData.id,\n      collection_name: collectionName,\n      inserted: true,\n      result: result\n    }\n  };\n} catch (error) {\n  // Log the error response body which often contains the specific Qdrant error message\n  console.error('Qdrant Error Response:', error.response?.data || error.message);\n  throw error;\n}"
+      },
+      "id": "c22e3f07-3dd5-4738-97bd-c16af11df838",
+      "name": "Insert to Qdrant",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        384,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "query",
+              "value": "What is RAG?"
+            }
+          ],
+          "number": [
+            {
+              "name": "top_k",
+              "value": 3
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2c5338f9-8dff-4adc-a9a2-a6a66118e58d",
+      "name": "Set Search Query",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        560,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Hybrid Search with Reranking\nconst query = $input.item.json.query;\nconst collectionName = $input.item.json.collection_name || 'hybrid_demo';\nconst topK = $input.item.json.top_k || 3;\nconst qdrantUrl = 'http://qdrant:6333';\n\n// Generate query embeddings with Ollama\nconst denseData = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'http://host.docker.internal:11434/api/embeddings',\n  headers: { 'Content-Type': 'application/json' },\n  body: { model: 'nomic-embed-text', prompt: query },\n  json: true\n});\nconst queryDense = denseData.embedding;\n\n// BM25\nconst bm25Data = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'http://fastembed-bm25:8000/embed/single',\n  headers: { 'Content-Type': 'application/json' },\n  body: { texts: query },\n  json: true\n});\nconst queryBm25 = bm25Data.embedding;\n\n// ColBERT\nconst colbertData = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'http://fastembed-colbert:8000/embed/single',\n  headers: { 'Content-Type': 'application/json' },\n  body: { texts: query },\n  json: true\n});\nconst queryColbert = colbertData.embedding;\n\n// Hybrid search\nconst searchData = await this.helpers.httpRequest({\n  method: 'POST',\n  url: `${qdrantUrl}/collections/${collectionName}/points/query`,\n  headers: { 'Content-Type': 'application/json' },\n  body: {\n    query: { fusion: 'rrf' },\n    prefetch: [\n      { query: queryDense, using: 'dense', limit: topK * 5 }, // Increased prefetch for better reranking\n      { query: { indices: queryBm25.indices, values: queryBm25.values }, using: 'bm25', limit: topK * 5 }\n    ],\n    limit: topK * 5, // Get more candidates for the ColBERT reranker to work with\n    with_payload: true\n  },\n  json: true\n});\n\n// FIX: Access the .points array from the result object\nconst candidates = searchData.result && searchData.result.points ? searchData.result.points : [];\n\n// ColBERT reranking function\nfunction colbertScore(qVecs, dVecs) {\n  let total = 0;\n  for (const qv of qVecs) {\n    let maxSim = -Infinity;\n    for (const dv of dVecs) {\n      let dot = 0, qNorm = 0, dNorm = 0;\n      for (let i = 0; i < qv.length; i++) {\n        dot += qv[i] * dv[i];\n        qNorm += qv[i] * qv[i];\n        dNorm += dv[i] * dv[i];\n      }\n      const denom = Math.sqrt(qNorm) * Math.sqrt(dNorm);\n      const sim = denom === 0 ? 0 : dot / denom;\n      maxSim = Math.max(maxSim, sim);\n    }\n    total += maxSim;\n  }\n  return total / qVecs.length;\n}\n\nconst results = candidates\n  .filter(c => c.payload && c.payload.colbert_embedding)\n  .map(c => {\n    const colbScore = colbertScore(queryColbert, c.payload.colbert_embedding);\n    return {\n      id: c.id,\n      text: c.payload.text,\n      hybrid_score: c.score, // This is the RRF score\n      colbert_score: colbScore,\n      final_score: (c.score * 0.4) + (colbScore * 0.6)\n    };\n  })\n  .sort((a, b) => b.final_score - a.final_score)\n  .slice(0, topK);\n\nreturn { \n  json: { \n    query, \n    results, \n    method: 'hybrid_with_colbert_reranking', \n    num_candidates: candidates.length,\n    num_results: results.length \n  } \n};"
+      },
+      "id": "3b2bed54-fc6d-4885-8811-da500330427d",
+      "name": "Hybrid Search",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        736,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "value": "={{ $json.text }}",
+        "dataPropertyName": "document_hash"
+      },
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        -496,
+        352
+      ],
+      "id": "4bbe437b-d06a-4531-83af-97f52f586453",
+      "name": "Crypto"
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "id",
+              "value": "={{ $json.document_hash }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "65bbe48e-e654-43cc-aaa8-33a69acae82e",
+      "name": "Set Document Id",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        -320,
+        352
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking 'Test workflow'": {
+      "main": [
+        [
+          {
+            "node": "Set Collection Name",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Collection Name": {
+      "main": [
+        [
+          {
+            "node": "Create Collection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Collection": {
+      "main": [
+        [
+          {
+            "node": "Set Sample Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Sample Document": {
+      "main": [
+        [
+          {
+            "node": "Crypto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Dense Embedding": {
+      "main": [
+        [
+          {
+            "node": "Generate BM25 Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate BM25 Embedding": {
+      "main": [
+        [
+          {
+            "node": "Generate ColBERT Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate ColBERT Embedding": {
+      "main": [
+        [
+          {
+            "node": "Insert to Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert to Qdrant": {
+      "main": [
+        [
+          {
+            "node": "Set Search Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Search Query": {
+      "main": [
+        [
+          {
+            "node": "Hybrid Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crypto": {
+      "main": [
+        [
+          {
+            "node": "Set Document Id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Document Id": {
+      "main": [
+        [
+          {
+            "node": "Generate Dense Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "5a031565-4a36-4b05-a008-f83e1a07f954",
+  "meta": {
+    "instanceId": "9983dd18e63d530d3471ed69776477f0d7b9bab644b03104ec272cb7ab911f94"
+  },
+  "id": "A4DEM94ugZ4rQWaO",
+  "tags": []
+}

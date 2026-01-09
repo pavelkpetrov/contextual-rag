@@ -1,0 +1,135 @@
+version: '3.8'
+
+services:
+
+  n8n:
+    image: n8nio/n8n:1.120.1
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    volumes:
+      # n8n's own persistent data (workflows, credentials, etc.)
+      - n8n_data:/home/node/.n8n
+      # Your custom mapped folder for documents
+      - ./n8n/work:/home/node/.n8n/work
+    environment:
+      # --- General n8n Settings ---
+      - N8N_HOST=n8n
+      - N8N_PORT=5678
+      - WEBHOOK_URL=http://localhost:5678
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      # Allow file access to workflows directory
+      - N8N_BLOCK_FILE_ACCESS_TO_N8N_FILES=false
+      - N8N_FILE_ACCESS_ALLOW_LIST=/home/node/.n8n/work
+    networks:
+      - rag_network
+
+  docling:
+    image: quay.io/docling-project/docling-serve:latest
+    container_name: docling
+    restart: unless-stopped
+    ports:
+      - "8002:5001"
+    environment:
+      - DOCLING_SERVE_ENABLE_UI=1
+      - DOCLING_CHUNKING_STRATEGY=hybrid
+      - DOCLING_CHUNK_SIZE=200
+      - DOCLING_CHUNK_OVERLAP=50
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - ./docling/data:/app/data
+      - ./docling/output:/app/output
+    networks:
+      - rag_network
+
+  # Ollama - Local LLM Runtime and Embeddings
+  # In case of ollama started from docker-compose file use host name as ollama
+  # In case of ollama started as a separate local process use host name as host.docker.internal
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      # Ollama's persistent storage for models
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    networks:
+      - rag_network
+#    # Pull models on startup
+#    entrypoint: ["/bin/sh", "-c"]
+#    command:
+#      - |
+#        ollama serve &
+#        sleep 5
+#        ollama pull nomic-embed-text
+#        wait
+
+  # FastEmbed - BM25 Sparse Embeddings Service
+  fastembed-bm25:
+    build:
+      context: ./fastembed
+      dockerfile: Dockerfile.bm25
+    container_name: fastembed-bm25
+    restart: unless-stopped
+    ports:
+      - "8003:8000"
+    environment:
+      - MODEL_NAME=Qdrant/bm25
+      - LOG_LEVEL=INFO
+    volumes:
+      - fastembed_bm25_cache:/root/.cache/fastembed
+    networks:
+      - rag_network
+
+  # FastEmbed - ColBERT Late Interaction Embeddings Service
+  fastembed-colbert:
+    build:
+      context: ./fastembed
+      dockerfile: Dockerfile.colbert
+    container_name: fastembed-colbert
+    restart: unless-stopped
+    ports:
+      - "8004:8000"
+    environment:
+      - MODEL_NAME=colbert-ir/colbertv2.0
+      - LOG_LEVEL=INFO
+    volumes:
+      - fastembed_colbert_cache:/root/.cache/fastembed
+    networks:
+      - rag_network
+
+  # Qdrant - Vector Store
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"  # HTTP API
+      - "6334:6334"  # gRPC API
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - rag_network
+
+volumes:
+  n8n_data:
+    driver: local
+  ollama_data:
+    driver: local
+  qdrant_data:
+    driver: local
+  fastembed_bm25_cache:
+    driver: local
+  fastembed_colbert_cache:
+    driver: local
+
+networks:
+  rag_network:
+    driver: bridge
